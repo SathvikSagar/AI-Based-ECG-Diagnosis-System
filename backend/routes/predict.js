@@ -22,61 +22,76 @@ const storage = multer.diskStorage({
 // limit to 10MB and accept any field name (handle in handler)
 const upload = multer({ storage, limits: { fileSize: 10 * 1024 * 1024 } });
 
-router.post('/', upload.any(), async (req, res) => {
+router.post("/", upload.any(), async (req, res) => {
   try {
-    // pick first uploaded file (supports field "image" or "file" or any)
-    const file = req.file || (req.files && req.files[0]);
+    const file = req.files?.[0];
+
     if (!file) {
-      return res.status(400).json({ success: false, message: 'No file uploaded. Use form field "image" or "file".' });
+      return res.status(400).json({
+        success: false,
+        message: "No file uploaded"
+      });
     }
-    if (!file.mimetype || !file.mimetype.startsWith('image/')) {
-      return res.status(400).json({ success: false, message: 'Uploaded file must be an image' });
+
+    if (!file.mimetype.startsWith("image/")) {
+      return res.status(400).json({
+        success: false,
+        message: "Uploaded file must be an image"
+      });
     }
+
     const filePath = file.path;
-    // resolve script path relative to this route file (reliable across workdirs)
-    let script = path.resolve(__dirname, '..', 'ml', 'predict_real.py');
+
+    let script = path.resolve(__dirname, "..", "ml", "predict_ecg.py");
+
     if (!fs.existsSync(script)) {
-      // fallback to project-root ml folder (older layout)
-      script = path.resolve(process.cwd(), 'ml', 'predict_real.py');
+      script = path.resolve(process.cwd(), "ml", "predict_ecg.py");
     }
 
     if (!fs.existsSync(script)) {
-      console.error('Predict script not found at', script);
-      return res.status(500).json({ success: false, message: 'Prediction script not found on server' });
+      return res.status(500).json({
+        success: false,
+        message: "Prediction script not found"
+      });
     }
-    console.log('Using Python script:', script);
 
-    const result = await runPythonScript(script, [filePath], { timeoutMS: 30000 }); // allow up to 30s
+    console.log("Using Python:", script);
 
-    console.log('Predict python result:', { code: result.code, python: result.python, stdoutLen: result.stdout?.length, stderrLen: result.stderr?.length });
+    const result = await runPythonScript(script, [filePath], {
+      timeoutMS: 30000,
+    });
+
+    console.log("Exit Code:", result.code);
+    console.log("STDOUT:", result.stdout);
+    console.log("STDERR:", result.stderr);
 
     if (result.code !== 0) {
       return res.status(500).json({
         success: false,
-        message: 'Python script error',
-        stdout: result.stdout,
+        message: "Python execution failed",
         stderr: result.stderr,
-        code: result.code
+        stdout: result.stdout
       });
     }
 
-    // predict_real.py should print JSON to stdout
-    try {
-      const parsed = JSON.parse(result.stdout);
-      return res.json(parsed);
-    } catch (err) {
-      return res.status(500).json({
-        success: false,
-        message: 'Invalid JSON output from Python',
-        parseError: err.message,
-        stdout: result.stdout,
-        stderr: result.stderr
-      });
-    }
+    const parsed = JSON.parse(result.stdout);
+
+    console.log("Prediction Response:", parsed);
+
+    return res.status(200).json({
+      success: true,
+      message: "Prediction completed successfully",
+      result: parsed
+    });
+
   } catch (err) {
-    // surface timeout and python messages
-    console.error('Predict route error:', err);
-    return res.status(500).json({ success: false, message: err.message });
+    console.error("Prediction Route Error:", err);
+
+    return res.status(500).json({
+      success: false,
+      message: err.message,
+      stack: err.stack
+    });
   }
 });
 

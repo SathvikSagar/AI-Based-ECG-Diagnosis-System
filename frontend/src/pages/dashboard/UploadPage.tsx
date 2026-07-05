@@ -130,7 +130,7 @@ export default function UploadPage() {
       const data = await res.json();
       console.log("🟣 Prediction Response:", data);
 
-      if (data.status !== "success") {
+      if (!res.ok || !data.success) {
         setError({
           title: "Prediction Failed",
           message: data.message || "Model could not process this ECG."

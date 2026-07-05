@@ -12,7 +12,7 @@ import { requestIdMiddleware } from "./middleware/requestId.js";
 
 // Routes
 import authRoutes from "./routes/auth.js";
-import predictRoutes from "./predict.js";
+
 import predictRouter from './routes/predict.js';
 import saveRoute from "./routes/save.js";
 import reportRoute from "./routes/reports.js";
@@ -98,12 +98,12 @@ const predictLimiter = rateLimit({
 
 // Routes
 app.use("/api/auth", authLimiter, authRoutes);
-app.use("/api/predict", predictLimiter, predictRoutes);
+app.use("/api/predict", predictLimiter, predictRouter);
 app.use("/api", saveRoute);
 app.use("/api", reportRoute);
 app.use("/api", updatePasswordRoute);
 app.use("/api", dashboardStatsRoute); // ⭐ NEW dashboard stats route
-app.use('/api/predict', predictRouter);
+
 
 // Default route
 app.get("/", (req, res) => {
@@ -168,35 +168,57 @@ const PORT = process.env.PORT || 5000;
 const server = app.listen(PORT, () => logger.info(`Server running on port ${PORT}`));
 
 // Graceful shutdown handling
-const gracefulShutdown = (signal) => {
+// ===============================
+// Graceful Shutdown
+// ===============================
+let shuttingDown = false;
+
+async function gracefulShutdown(signal) {
+  if (shuttingDown) return;
+  shuttingDown = true;
+
   logger.info(`${signal} received, starting graceful shutdown`);
-  
-  server.close(() => {
-    logger.info('HTTP server closed');
-    
-    mongoose.connection.close(false, () => {
-      logger.info('MongoDB connection closed');
-      process.exit(0);
+
+  try {
+    // Stop accepting new requests
+    await new Promise((resolve) => server.close(resolve));
+    logger.info("HTTP server closed");
+
+    // Close MongoDB only if connected
+    if (mongoose.connection.readyState !== 0) {
+      await mongoose.connection.close();
+      logger.info("MongoDB connection closed");
+    }
+
+    process.exit(0);
+  } catch (err) {
+    logger.error("Shutdown error", {
+      error: err.message,
+      stack: err.stack,
     });
-  });
-  
-  // Force shutdown after 10 seconds
-  setTimeout(() => {
-    logger.error('Forced shutdown after timeout');
     process.exit(1);
-  }, 10000);
-};
+  }
+}
 
-process.on('SIGTERM', () => gracefulShutdown('SIGTERM'));
-process.on('SIGINT', () => gracefulShutdown('SIGINT'));
+// OS Signals
+process.on("SIGINT", () => gracefulShutdown("SIGINT"));
+process.on("SIGTERM", () => gracefulShutdown("SIGTERM"));
 
-// Handle uncaught errors
-process.on('uncaughtException', (err) => {
-  logger.error('Uncaught Exception', { error: err.message, stack: err.stack });
-  gracefulShutdown('uncaughtException');
+// Uncaught Exceptions
+process.on("uncaughtException", (err) => {
+  logger.error("Uncaught Exception", {
+    error: err.message,
+    stack: err.stack,
+  });
+
+  process.exit(1);
 });
 
-process.on('unhandledRejection', (reason, promise) => {
-  logger.error('Unhandled Rejection', { reason, promise });
-  gracefulShutdown('unhandledRejection');
+// Unhandled Promise Rejections
+process.on("unhandledRejection", (reason) => {
+  logger.error("Unhandled Rejection", {
+    reason: reason instanceof Error ? reason.stack : reason,
+  });
+
+  process.exit(1);
 });
